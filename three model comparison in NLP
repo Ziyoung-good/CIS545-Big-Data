@@ -1,0 +1,520 @@
+# install stuff
+%%capture
+!pip install -U gensim
+!pip install urllib2
+
+# check gensim version
+import gensim
+gensim.__version__
+from gensim.parsing.preprocessing import STOPWORDS
+
+# import stuff
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+
+from gensim import corpora
+from gensim.models import LsiModel, KeyedVectors
+from gensim.models.tfidfmodel import TfidfModel
+from gensim.models.nmf import Nmf
+
+import sklearn.model_selection as ms
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.cluster import KMeans
+from sklearn.manifold import TSNE
+
+from datetime import *
+from operator import itemgetter
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+
+%%capture
+!wget https://cis.upenn.edu/~cis545/data/reviews.dict
+!wget https://cis.upenn.edu/~cis545/data/train_reviews.mm
+!wget https://cis.upenn.edu/~cis545/data/train_times.npy
+
+reviews_dict = corpora.Dictionary.load("reviews.dict")
+reviews_bow = corpora.MmCorpus('train_reviews.mm')
+reviews_times  = np.load('train_times.npy')
+reviews_times.shape = (len(reviews_bow),1)
+y = np.vstack((np.repeat(1, 4000), np.repeat(2, 4000), np.repeat(3, 4000), np.repeat(4, 4000), np.repeat(5, 4000)))
+y = np.repeat(y, 5)
+
+print(reviews_dict)
+print(reviews_bow)
+
+def lookup_docs(corpus, indices):
+    docs = []
+    count1 = 0 
+    count2 = 0
+    indices = sorted(indices)
+    for word in corpus:
+      if (count2 == indices[count1]):
+        docs.append(word)
+        if(count1 == len(indices) - 1):
+          break;
+        count1 += 1
+      count2 +=1
+    return docs
+ 
+def get_all_translate_doc(corpus):
+  indices = []
+  for i in range(len(corpus)):
+    indices.append(i)
+  doc = lookup_docs(corpus, indices)
+  return doc
+translate_doc = get_all_translate_doc(reviews_bow)
+
+
+def get_indexOfStopwords(word_dict, STOPWORDS):
+  stopWordList = []
+  for i in range(len(word_dict)):
+    if word_dict[i] in STOPWORDS:
+      stopWordList.append(i)
+  return stopWordList
+
+stopIndexList =  get_indexOfStopwords(reviews_dict, STOPWORDS)
+
+def delete_stopword(translate_document, stopwordIndex):
+  new_doc = []
+  for i in range(len(translate_document)):
+    new_doc.append([])
+    count = 0
+  for doc in translate_document:
+    for word in doc:
+      if word[0] not in stopwordIndex:
+        new_doc[count].append(word)
+    count += 1
+  return new_doc
+  
+new_documents =delete_stopword(translate_doc, stopIndexList )
+
+
+def translate_review(review, reviews_dict):
+  string = ""
+  string1 =''
+  for vector in review:
+    string1 = (reviews_dict[vector[0]]+" ")*int(vector[1])
+    string += string1
+  return string
+
+no_stop_words_List = []
+for i in range(len(new_documents)):
+  no_stop_words_List.append(translate_review(new_documents[i], reviews_dict))
+  
+def convert_to_string_word(words_List):
+  string_List = []
+  for i in range(len(reviews_bow)):
+    string_List.append([])
+  count = 0
+  for doc in words_List:
+    for word in doc.split(" "):
+      string_List[count].append(str(word))
+    string_List[count].pop()
+    count +=1
+  return string_List
+  
+original_words_List = []
+for i in range(len(translate_doc)):
+  original_words_List.append(translate_review(translate_doc[i], reviews_dict))
+original_reviews =  convert_to_string_word(original_words_List)
+no_Stop_word_reviews =  convert_to_string_word(no_stop_words_List)
+
+def get_index_word(string_doc):
+  temp= set()
+  result = set()
+  for document in string_doc:
+      for word in document:
+        if word not in temp:
+            temp.add(word)
+        else:
+            result.add(word)
+  return result
+
+vocab = get_index_word(no_Stop_word_reviews)
+
+def filter_infrequent_Word(vocab, string_doc):
+  all_reviews = []
+  doc = []
+  for document in string_doc:
+    doc = []
+    for word in document:
+      if word in vocab:
+        doc.append(word)
+    all_reviews.append(doc)
+  return all_reviews
+
+frequent_word_reviews = filter_infrequent_Word(vocab, no_Stop_word_reviews)
+
+from tokenize import tokenize, untokenize, NUMBER, STRING, NAME, OP
+from keras.preprocessing.text import Tokenizer
+from keras.preprocessing.sequence import pad_sequences
+from sklearn.model_selection import train_test_split
+from keras.models import Sequential
+from keras.layers import Dense, Activation, Dropout, Flatten
+from keras.layers import Embedding
+from keras.layers import SpatialDropout1D
+from keras.layers import LSTM
+from keras.callbacks import EarlyStopping
+
+def get_LSTM_dataSet(reviews):
+  text_LSTM =[]
+  for i in range(len(reviews)):
+    text_LSTM.append(" ".join(reviews[i]))
+
+  reviews_df={"label" : y,
+    "document" : text_LSTM}
+  reviews_df=pd.DataFrame(reviews_df)
+  return reviews_df
+  
+freq_LSTM_df = get_LSTM_dataSet(frequent_word_reviews)
+original_LSTM_df = get_LSTM_dataSet(original_reviews)
+no_Stop_LSTM_df = get_LSTM_dataSet(no_Stop_word_reviews)
+
+display(freq_LSTM_df)
+display(original_LSTM_df)
+display(no_Stop_LSTM_df)
+
+MAX_NB_WORDS = 20000
+MAX_SEQUENCE_LENGTH = 100
+EMBEDDING_DIM = 100
+
+def Preprocess_Data(reviews_Data):
+  tokenizer = Tokenizer(num_words=MAX_NB_WORDS)
+  tokenizer.fit_on_texts(reviews_Data['document'].values)
+  word_index = tokenizer.word_index
+  X = tokenizer.texts_to_sequences(reviews_Data['document'].values)
+  X = pad_sequences(X, maxlen=MAX_SEQUENCE_LENGTH)
+  Y = pd.get_dummies(reviews_Data['label']).values
+  print('Different word: ',len(word_index))
+  return X,Y
+  
+X_org,Y_org = Preprocess_Data(original_LSTM_df)
+X_no_stop,Y_no_stop= Preprocess_Data(no_Stop_LSTM_df)
+X_freq,Y_freq = Preprocess_Data(freq_LSTM_df)
+
+def Split_trainSet_TestSet(X,Y):
+  X_train, X_test, Y_train, Y_test = train_test_split(X,Y, test_size = 0.10, random_state = 1911)
+  return X_train, Y_train, X_test, Y_test
+  
+X_org_train, Y_org_train,X_org_test, Y_org_test = Split_trainSet_TestSet(X_org,Y_org)
+X_no_stop_train, Y_no_stop_train, X_no_stop_test, Y_no_stop_test =  Split_trainSet_TestSet(X_no_stop,Y_no_stop)
+X_freq_train, Y_freq_train,X_freq_test, Y_freq_test = Split_trainSet_TestSet(X_freq,Y_freq)
+
+def train_model(X,X_train,Y_train):
+  epochs = 1
+  model = Sequential()
+  model.add(Embedding(MAX_NB_WORDS, EMBEDDING_DIM, input_length=X.shape[1]))
+  model.add(SpatialDropout1D(0.2))
+  model.add(LSTM(100, dropout=0.2, recurrent_dropout=0.2))
+  model.add(Dense(5, activation='sigmoid'))
+  model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+  print(model.summary())
+  
+  batch_size = 64
+  history = model.fit(X_train, Y_train, epochs=epochs, batch_size=batch_size,validation_split=0.1,
+                    callbacks=[EarlyStopping(monitor='val_loss', patience=3, min_delta=0.0001)])
+  return model
+  
+org_model = train_model(X_org,X_org_train,Y_org_train)
+no_Stop_model = train_model(X_no_stop,X_no_stop_train,Y_no_stop_train)
+freq_model = train_model(X_freq,X_freq_train,Y_freq_train)
+
+import seaborn as sns
+from sklearn.metrics import accuracy_score, confusion_matrix
+
+def test_accuracy(model,reviews,y_test):
+  y_pred = model.predict(reviews)
+  y_pred = y_pred.argmax(axis = 1)
+  y_test = y_test.argmax(axis = 1)
+  acc = 0
+  for i in range(len(y_pred)):
+    if y_pred[i] == y_test[i]:
+      acc +=1
+  return acc/len(y_pred)
+
+org_acc_LSTM = test_accuracy(org_model,X_org_test,Y_org_test)
+no_Stop_acc_LSTM = test_accuracy(no_Stop_model, X_no_stop_test,Y_no_stop_test)
+freq_acc_LSTM = test_accuracy(freq_model,X_freq_test,Y_freq_test)
+
+best_LSTM_acc = max(org_acc_LSTM,no_Stop_acc_LSTM,freq_acc_LSTM)
+print(best_LSTM_acc)
+
+
+mpl.rcParams["axes.unicode_minus"] = False
+x1 = np.arange(3)
+plt.ylim((0.85, 0.89))
+y1 = [org_acc_LSTM, no_Stop_acc_LSTM, freq_acc_LSTM]
+bar_width = 0.2
+tick_label = ["org_data_acc", "no_stop_word_data_acc","freq_word_acc"]
+plt.bar(x1, y1, bar_width, align="center", color="c", label="accuracy", alpha=0.5)
+plt.xlabel("different dataset")
+plt.ylabel("accuracy")
+plt.xticks(x1+bar_width/2, tick_label)
+plt.legend()
+plt.show()
+
+frequent_word_dict = corpora.Dictionary(frequent_word_reviews)
+original_word_dict = corpora.Dictionary(original_reviews)
+no_Stop_word_dict = corpora.Dictionary(no_Stop_word_reviews)
+
+freq_doc_bow = [frequent_word_dict.doc2bow(doc) for doc in frequent_word_reviews]
+no_stop_doc_bow = [no_Stop_word_dict.doc2bow(doc) for doc in no_Stop_word_reviews ]
+org_doc_bow = [original_word_dict.doc2bow(doc) for doc in original_reviews]
+
+def make_tfidf(reviews_bow):
+    model = TfidfModel(reviews_bow , normalize= True)
+    return model[reviews_bow]
+freq_reviews_tfidf = make_tfidf(freq_doc_bow)
+no_stop_reviews_tfidf = make_tfidf(no_stop_doc_bow)
+orginal_reviews_tfidf = make_tfidf(org_doc_bow)
+
+def densify(sparse, columns):
+    new_List =  [[] for i in range(columns)]
+    for count1 in range(0,columns):
+      for count2 in range(0, len(sparse)):
+        new_List[count1].append(0)
+    count = 0
+    for value1 in sparse:
+      for value2 in value1:
+        new_List[value2[0]][count]=value2[1]
+      count += 1
+    new_array=np.array(new_List)
+    return new_array.transpose()
+    
+def evaluate_model(X, review_times, y):
+    X = np.hstack((X, review_times))
+    X_train, X_test, y_train, y_test = ms.train_test_split(X, y, test_size=0.1, random_state = 1911)
+    rfor = RandomForestClassifier(n_estimators=70, random_state=1911)
+    # TODO #
+    rfor.fit(X_train,y_train)
+    y_predict = rfor.predict(X_test)
+    correct_num = 0
+    for a in range(0, len(y_test)):
+      if y_predict[a] == y_test[a]:
+        correct_num += 1
+    accuracy = correct_num / len(y_test)
+    return accuracy
+    
+ def evaluate_cutoffs(X_orig, X_dict, X_times, y, cutoffs):
+        results = []
+        np.random.seed(1911)
+        model1 = LsiModel(X_orig, id2word=X_dict, num_topics = cutoffs)
+        new_vector = model1[X_orig] 
+        X_new = densify(new_vector, cutoffs)
+        accuracy = evaluate_model(X_new, X_times, y)
+        results.append(accuracy)
+        print(results)
+        return results
+        
+ org_results = evaluate_cutoffs(orginal_reviews_tfidf, original_word_dict, reviews_times, y, 27)
+ no_stop_results = evaluate_cutoffs(no_stop_reviews_tfidf, no_Stop_word_dict, reviews_times, y, 28)
+ freq_results = evaluate_cutoffs(freq_reviews_tfidf, frequent_word_dict, reviews_times, y, 28)
+ org_acc_rf = max(org_results)
+ no_stop_acc_rf = max(no_stop_results)
+ freq_acc_rf = max(freq_results)
+  
+ best_rf_acc = max(org_acc_rf ,no_stop_acc_rf,freq_acc_rf)
+  
+ mpl.rcParams["axes.unicode_minus"] = False
+ x2 = np.arange(3)
+ plt.ylim((0.78, 0.81))
+ y2 = [org_acc_rf, no_stop_acc_rf, freq_acc_rf]
+ bar_width = 0.2
+ tick_label = ["org_data_acc", "no_stop_word_data_acc","freq_word_acc"]
+ plt.bar(x2, y2, bar_width, align="center", color="c", label="accuracy", alpha=0.5)
+ plt.xlabel("different dataset")
+ plt.ylabel("accuracy")
+ plt.xticks(x2+bar_width/2, tick_label)
+ plt.legend()
+ plt.show()
+  
+ import numpy
+ import collections
+  
+ def Split_trainSet_TestSet(X,Y):
+ X_train, X_test, Y_train, Y_test = train_test_split(X,Y, test_size = 0.10, random_state = 1911)
+ return X_train, Y_train, X_test, Y_test
+ 
+ x_org_train, y_org_train, x_org_test, y_org_test = Split_trainSet_TestSet(original_reviews,y)
+ x_no_stop_train, y_no_stop_train, x_Stop_word_test, y_no_stop_test = Split_trainSet_TestSet(no_Stop_word_reviews,y)
+ x_freq_train, y_freq_train ,x_freq_test ,y_freq_test = Split_trainSet_TestSet(frequent_word_reviews,y)
+ 
+ def get_vocabulary(D):
+  
+    word_dict = set() 
+    for i in D:
+        for a in i:
+            word_dict.add(a)
+    return word_dict
+ org_vocab = get_vocabulary(original_reviews)
+ def compute_idf(D, vocab):
+      D_value = len(D)
+      list_d = []
+      for doc in D:
+          list_d.append({i:1 for i in doc})
+
+      idf = {}
+      for j in range(len(list_d)):
+          for a, v in list_d[j].items():
+              if a in idf.keys() and a in vocab:
+                  idf[a] += v
+              elif a not in idf.keys() and a in vocab:
+                  idf[a] = v
+
+      for i in idf:
+          idf[i] = numpy.log(D_value / idf[i])
+      return idf
+org_idf = compute_idf(x_org_train, org_vocab)
+no_stop_idf = compute_idf(x_no_stop_train, org_vocab)
+freq_idf = compute_idf(x_freq_train, org_vocab)
+
+def convert_document_to_feature_dictionary(idf, doc, vocab):
+       
+        # TODO
+        # raise NotImplementedError
+        word_dict = {}
+        word_dict_count = {}
+        for i in doc:
+            if i in vocab:
+                if i not in word_dict_count:
+                    word_dict_count[i] = 1
+                else:
+                    word_dict_count[i] += 1
+
+        for i in doc:
+            if i in word_dict_count:
+                word_dict[i] = word_dict_count[i] * idf[i]
+        return word_dict
+def convert_to_features(idf, D, vocab):
+    X = []
+    for doc in D:
+        X.append(convert_document_to_feature_dictionary(idf,doc, vocab))
+    return X
+x_org_train = convert_to_features(org_idf, x_org_train, org_vocab)
+x_no_stop_train = convert_to_features(no_stop_idf, x_no_stop_train, org_vocab)
+x_freq_train = convert_to_features(freq_idf,x_freq_train, org_vocab)
+
+def train_naive_bayes(X, y, k, vocab):
+    y_size = len(X)
+    p_y = {}
+    py = collections.Counter(y)
+  
+    for i in py:
+        p_y[i] = py[i] / y_size
+    
+    p_v_y ={}
+    index_list = {}
+    for i in p_y:
+        index = [j for j, l in enumerate(y) if l == i]
+        index_list[i] = index
+        p_v_y[i] = {}
+  
+    
+    for i in index_list:
+        for j in index_list[i]:
+            for a, v in X[j].items():
+                if a in p_v_y[i].keys():
+                    p_v_y[i][a] += v
+                else:
+                    p_v_y[i][a] = v
+    
+    
+    for word in vocab:
+        if word not in p_v_y[1]:
+            p_v_y[1][word] = 0 
+        if word not in p_v_y[2]:
+            p_v_y[2][word] = 0
+        if word not in p_v_y[3]:
+            p_v_y[3][word] = 0  
+        if word not in p_v_y[4]:
+            p_v_y[4][word] = 0  
+        if word not in p_v_y[5]:
+            p_v_y[5][word] = 0    
+    
+    for i in p_v_y:
+        sum1 = 0
+        for word in p_v_y[i]:
+            sum1 += p_v_y[i][word]
+        for word in p_v_y[i]:
+            p_v_y[i][word] = (k + p_v_y[i][word]) / (sum1 + k*len(vocab))
+            
+    return p_y, p_v_y
+org_p_y, org_p_v_y = train_naive_bayes(x_org_train, y_org_train, 0.1, org_vocab)
+no_stop_p_y, no_stop_p_v_y = train_naive_bayes(x_no_stop_train, y_no_stop_train, 0.1, org_vocab)
+freq_p_y, freq_p_v_y = train_naive_bayes(x_freq_train, y_freq_train, 0.1, org_vocab)
+
+def predict_naive_bayes(D, p_y, p_v_y):
+    y_pred = []
+    y_con = []
+    for documents in D:
+        result = []
+        star1 = 0
+        star2 = 0
+        star3 = 0
+        star4 = 0
+        star5 = 0
+        # con_pos = 1
+        # con_neg = 1
+        for word in documents:
+                star2 += numpy.log(p_v_y[2][word])
+                star1 += numpy.log(p_v_y[1][word])
+                star3 += numpy.log(p_v_y[3][word])
+                star4 += numpy.log(p_v_y[4][word])
+                star5 += numpy.log(p_v_y[5][word])
+      
+        star2 =  star2+numpy.log(p_y[2])
+        star1 =  star1+numpy.log(p_y[1])
+        star3 =  star3+numpy.log(p_y[3])
+        star4 =  star4+numpy.log(p_y[4])
+        star5 =  star5+numpy.log(p_y[5])
+        result.append(star1)
+        result.append(star2)
+        result.append(star3)
+        result.append(star4)
+        result.append(star5)
+
+        y_pred.append((result.index(max(result))+1))
+     
+    return y_pred
+def compute_acc(y_pred,y):
+
+  acc = 0
+  for i in range(len(y)):
+    if y[i] == y_pred[i]:
+      acc +=1
+  return acc/len(y)
+org_acc_nb = compute_acc(org_y_pred,y_org_test)
+no_stop_acc_nb = compute_acc(no_stop_y_pred,y_no_stop_test)
+freq_acc_nb = compute_acc(freq_y_pred,y_freq_test)
+best_naive_bayes_acc = max(org_acc_nb,no_stop_acc_nb, freq_acc_nb)
+
+mpl.rcParams["axes.unicode_minus"] = False
+x3 = np.arange(3)
+plt.ylim((0.85, 0.86))
+y3 = [org_acc_nb, no_stop_acc_nb, freq_acc_nb]
+bar_width = 0.2
+tick_label = ["org_data_acc", "no_stop_word_data_acc","freq_word_acc"]
+plt.bar(x3, y3, bar_width, align="center", color="b", label="accuracy", alpha=0.5)
+plt.xlabel("different dataset")
+plt.ylabel("accuracy")
+plt.xticks(x3+bar_width/2, tick_label)
+plt.legend()
+plt.show()
+
+
+def which_best_model(LSTM_acc, rf_acc , navie_bayes_acc):
+  acc = max(LSTM_acc, rf_acc , navie_bayes_acc)
+  if acc == LSTM_acc:
+    print("LSTM is the best model for this topic among three models")
+  elif acc ==  rf_acc:
+    print("Random Forest is the best model for this topic among three models")
+  else:
+    print("Naive Bayes is the best model for this topic among three models")
+    
+which_best_model(best_LSTM_acc, best_rf_acc , best_naive_bayes_acc)
+
+
+
+
